@@ -58,10 +58,7 @@ class CONet(nn.Module):
         self.cs1 = CS1()
         self.cs2 = CS2()
         self.cs3 = CS3()
-        self.scmodule0 = SC(dims[0])
-        self.scmodule1 = SC(dims[1])
-        self.scmodule2 = SC(dims[2])
-        self.scmodule3 = SC(dims[3])
+        self.scmodule = SC(dims[0])
         self.acs1 = ACS1()
         self.acs2 = ACS2()
         self.acs3 = ACS3()
@@ -73,30 +70,45 @@ class CONet(nn.Module):
         self.de2 = ECR_block(dims[2], rate=3)
         self.de1 = ECR_block(dims[1], rate=2)
         self.de0 = ECR_block(dims[0], rate=1)
+        self.down0 = downs(rate=4)
+        self.down1 = downs(rate=8)
+        self.down2 = downs(rate=16)
+        self.down3 = downs(rate=32)
+
         
     def forward(self, x, y_0, y_1, y_2, y_3):
-        x = x * (1 + torch.sigmoid(self.scmodule0(y_0)))
+        size = x.size()
+        print('x0', x.shape)
+        y_0 = self.scmodule(y_0)
+        y_0 = F.interpolate(y_0, size=(2, size[3], size[3]), mode='trilinear', align_corners=True)
+        x = x * y_0 + x
         x = self.en0(x)
         x0 = x
         x = self.cs1(x)
-        x = x * torch.sigmoid(self.cs1(self.scmodule1(y_1))) + x
+        y_1 = self.scmodule(y_1)
+        y_1 = F.interpolate(y_1, size=(2, size[3], size[3]), mode='trilinear', align_corners=True)
+        x = x * self.cs1(y_1) + x
         x = self.en1(x)
         x1 = x
         x = self.cs2(x)
-        x = x * torch.sigmoid(self.cs2(self.cs1(self.scmodule2(y_2)))) + x
+        y_2 = self.scmodule(y_2)
+        y_2 = F.interpolate(y_2, size=(2, size[3], size[3]), mode='trilinear', align_corners=True)
+        x = x * self.cs2(self.cs1(y_2)) + x
         x = self.en2(x)
         x2 = x
         x = self.cs3(x)
-        x = x * torch.sigmoid(self.cs3(self.cs2(self.cs1(self.scmodule3(y_3))))) + x
+        y_3 = self.scmodule(y_3)
+        y_3 = F.interpolate(y_3, size=(2, size[3], size[3]), mode='trilinear', align_corners=True)
+        x = x * self.cs3(self.cs2(self.cs1(y_3))) + x
         x = self.en3(x)
-        out_3 = x
+        out_3 = self.down3(self.acs1(self.acs2(self.acs3(x))))
         x = self.de2(self.acs3(self.de3(x))+x2)
-        out_2 = x
+        out_2 = self.down2(self.acs1(self.acs2(x)))
         x = self.de1(self.acs2(x)+x1)
-        out_1 = x
+        out_1 = self.down1(self.acs1(x))
         x = self.de0(self.acs1(x)+x0)
-        out_0 = x
-        return out_0, out_1, out_2, out_3
+        out_0 = self.down0(x)
+        return x, out_0, out_1, out_2, out_3
 
 
 class CS1(nn.Module):
@@ -229,12 +241,12 @@ class ACS3(nn.Module):
 
 
 class MC(nn.Module):
-    def __init__(self, in_channels, out_channels, bias=False):
+    def __init__(self, channels):
         super(MC, self).__init__()
         self.conv_gelu_conv = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels * 4, kernel_size=(1, 1, 1),stride=(1, 1, 1), padding=(0, 0, 0)),
+            nn.Conv3d(channels, channels * 4, kernel_size=(1, 1, 1),stride=(1, 1, 1), padding=(0, 0, 0)),
             nn.GELU(),
-            nn.Conv3d(in_channels * 4, out_channels, kernel_size=(1, 1, 1), stride=(1, 1, 1), padding=(0, 0, 0))
+            nn.Conv3d(channels * 4, channels, kernel_size=(1, 1, 1), stride=(1, 1, 1), padding=(0, 0, 0))
         )
 
     def _res(self, x):  # B, C, V, W, H
@@ -260,8 +272,19 @@ class SC(nn.Module):
         )
 
     def forward(self,  x):
-        y = self.ln_gelu_conv(x)
+        y = torch.sigmoid(self.ln_gelu_conv(x))
         return y
 
+class downs(nn.Module):
+    def __init__(self, rate=2):
+        super(downs, self).__init__()
+        self.maxpool = nn.MaxPool2d(kernel_size=(rate, rate), stride=(rate, rate), padding=(0, 0))
+        self.rate = rate
 
+    def forward(self, x2):
+        B, C4, T4, H4, W4 = x2.size()
+        x2_flatten = x2.view(B, C4 * T4, H4, W4)
+        x2_flatten_up = self.maxpool(x2_flatten)
+        x2_up = x2_flatten_up.view(B, C4, T4, H4 // self.rate, W4 // self.rate)
+        return x2_up
 
