@@ -1,4 +1,4 @@
-# COSU
-This is part of the component about "Channel-overcomplete Convolutional Architectures for RGB-D Salient Object Detection"
+  # 科苏
+这是关于"通道过于完整的卷绕结构的RGB-D显著目标检测"的组成部分
 
-Code update in progress...
+
